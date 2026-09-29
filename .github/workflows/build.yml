@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       device:
-        description: 'Target Device Codename (e.g., lmi, umi)'
+        description: 'Target Device Codename'
         required: true
-        default: 'lmi'
+        default: 'alioth'
         type: choice
         options:
           - psyche
@@ -26,7 +26,7 @@ on:
       script:
         description: 'Select Build Script'
         required: true
-        default: 'build.sh'
+        default: 'build-miui.sh'
         type: choice
         options:
           - build.sh
@@ -41,60 +41,145 @@ on:
 jobs:
   build:
     name: Build Kernel for ${{ inputs.device }} (${{ inputs.script }}) (${{ inputs.ksu && 'KSU' || 'NoKSU' }})
+
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout Source
-      uses: actions/checkout@v6
-      with:
-        fetch-depth: 1
 
-    - name: Cleanup Disk Space
-      run: |
-        sudo rm -rf /usr/share/dotnet
-        sudo rm -rf /opt/ghc
-        sudo rm -rf "/usr/local/share/boost"
-        sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+      # ============================================================
+      # 1. CHECKOUT
+      # ============================================================
 
-    - name: Install Dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y build-essential git curl wget bison flex zip bc cpio libssl-dev ccache python-is-python3
+      - name: Checkout Source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
 
-    - name: Setup Cache (ccache)
-      uses: actions/cache@v5
-      with:
-        path: ~/.cache/ccache_mikernel
-        key: kernel-ccache-${{ inputs.device }}-${{ inputs.script }}-${{ github.run_id }}
-        restore-keys: |
-          kernel-ccache-${{ inputs.device }}-${{ inputs.script }}-
-          kernel-ccache-${{ inputs.device }}-
-          kernel-ccache-
 
-    - name: Setup Toolchain (ZyC-Clang 15)
-      run: |
-        mkdir -p $HOME/zyc-clang
-        cd $HOME/zyc-clang
-        wget -q https://github.com/ZyCromerZ/Clang/releases/download/15.0.7-20260208-release/Clang-15.0.7-20260208.tar.gz
-        tar -zxvf Clang-15.0.7-20260208.tar.gz
+      # ============================================================
+      # 2. CLEAN DISK
+      # ============================================================
 
-    - name: Build Kernel
-      run: |
-        chmod +x build.sh build-miui.sh
-        
-        echo "Using script: ${{ inputs.script }}"
+      - name: Cleanup Disk Space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf "/usr/local/share/boost"
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
 
-        if [ "${{ inputs.ksu }}" == "true" ]; then
-          echo "Building with KernelSU..."
-          bash ${{ inputs.script }} ${{ inputs.device }} ksu
-        else
-          echo "Building without KernelSU..."
-          bash ${{ inputs.script }} ${{ inputs.device }}
-        fi
+          echo "Free space:"
+          df -h
 
-    - name: Upload Artifacts
-      uses: actions/upload-artifact@v6
-      with:
-        name: Kernel-${{ inputs.device }}-${{ inputs.script }}-${{ inputs.ksu && 'KSU' || 'NoKSU' }}-${{ github.run_number }}
-        path: ./*.zip
-        if-no-files-found: error
+
+      # ============================================================
+      # 3. INSTALL DEPENDENCIES
+      # ============================================================
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            build-essential \
+            git \
+            curl \
+            wget \
+            bison \
+            flex \
+            zip \
+            unzip \
+            bc \
+            cpio \
+            libssl-dev \
+            ccache \
+            python-is-python3 \
+            jq
+
+          echo "Dependencies installed."
+
+
+      # ============================================================
+      # 4. SETUP CCACHE
+      # ============================================================
+
+      - name: Setup Cache (ccache)
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ccache_mikernel
+          key: kernel-ccache-${{ inputs.device }}-${{ inputs.script }}-${{ github.run_id }}
+          restore-keys: |
+            kernel-ccache-${{ inputs.device }}-${{ inputs.script }}-
+            kernel-ccache-${{ inputs.device }}-
+            kernel-ccache-
+
+
+      # ============================================================
+      # 5. SETUP ZYC-CLANG 15
+      # ============================================================
+
+      - name: Setup Toolchain (ZyC-Clang 15)
+        run: |
+          mkdir -p "$HOME/zyc-clang"
+
+          cd "$HOME/zyc-clang"
+
+          wget -q \
+            https://github.com/ZyCromerZ/Clang/releases/download/15.0.7-20260208-release/Clang-15.0.7-20260208.tar.gz
+
+          tar -zxvf Clang-15.0.7-20260208.tar.gz
+
+          echo "ZyC-Clang installed."
+
+          ls -lah "$HOME/zyc-clang"
+
+
+      # ============================================================
+      # 6. PIN RESUKISU TO HISTORICAL COMMIT
+      #
+      # Your build-miui.sh currently downloads:
+      #
+      # ReSukiSU/main/kernel/setup.sh
+      #
+      # Instead of using today's moving main branch, resolve the
+      # latest ReSukiSU commit available by May 16, 2026.
+      # ============================================================
+
+      - name: Pin ReSukiSU For KSU Build
+        if: ${{ inputs.ksu && inputs.script == 'build-miui.sh' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "ReSukiSU compatibility pin"
+          echo "========================================"
+
+          RESUKISU_UNTIL="2026-05-16T23:59:59Z"
+
+          echo "Searching ReSukiSU commit before:"
+          echo "$RESUKISU_UNTIL"
+
+          RESPONSE=$(curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/ReSukiSU/ReSukiSU/commits?until=${RESUKISU_UNTIL}&per_page=1")
+
+          RESUKISU_COMMIT=$(echo "$RESPONSE" | jq -r '.[0].sha')
+
+          if [ -z "$RESUKISU_COMMIT" ] || [ "$RESUKISU_COMMIT" = "null" ]; then
+            echo "ERROR: Could not resolve ReSukiSU commit."
+            echo "$RESPONSE"
+            exit 1
+          fi
+
+          echo "Resolved ReSukiSU commit:"
+          echo "$RESUKISU_COMMIT"
+
+          RESUKISU_URL="https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/${RESUKISU_COMMIT}/kernel/setup.sh"
+
+          echo "Pinned setup URL:"
+          echo "$RESUKISU_URL"
+
+          echo "Checking setup.sh..."
+          curl -
