@@ -12,8 +12,10 @@ jobs:
         run: |
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
           
-      - name: Save changes automatically
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "Update SukiSU Ultra drivers in old branch"
-          branch: ${{ github.ref_name }}
+      - name: Push changes
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          git add .
+          git commit -m "Update SukiSU Ultra" || exit 0
+          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git HEAD:${{ github.ref_name }}
